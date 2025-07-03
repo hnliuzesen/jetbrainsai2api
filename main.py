@@ -2,13 +2,11 @@ import json
 import time
 import uuid
 import threading
-import hashlib
-from collections import OrderedDict
 from typing import Any, AsyncGenerator, Dict, List, Optional, Union
 
 import httpx
 import uvicorn
-from fastapi import FastAPI, HTTPException, Depends, Header
+from fastapi import FastAPI, HTTPException, Depends
 from fastapi.responses import StreamingResponse
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from pydantic import BaseModel, Field
@@ -352,7 +350,7 @@ async def chat_completions(
     async def api_stream_generator():
         """一个包装 httpx 请求的异步生成器"""
         async with http_client.stream("POST", "https://api.jetbrains.ai/user/v5/llm/chat/stream/v7", 
-                                       json=payload, headers=headers, timeout=300) as response:
+                                       json=payload, headers=headers) as response:
             response.raise_for_status()
             async for line in response.aiter_lines():
                 yield line
