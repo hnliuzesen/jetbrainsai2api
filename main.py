@@ -4,7 +4,7 @@ import uuid
 import threading
 import hashlib
 from collections import OrderedDict
-from typing import Any, AsyncGenerator, Dict, List, Optional
+from typing import Any, AsyncGenerator, Dict, List, Optional, Union
 
 import httpx
 import uvicorn
@@ -28,7 +28,7 @@ http_client: Optional[httpx.AsyncClient] = None
 # Pydantic Models
 class ChatMessage(BaseModel):
     role: str
-    content: str
+    content: Union[str, List[Dict[str, Any]]]
 
 class ChatCompletionRequest(BaseModel):
     model: str
@@ -294,6 +294,20 @@ async def aggregate_stream_for_non_stream_response(
         )]
     )
 
+def extract_text_content(content: Union[str, List[Dict[str, Any]]]) -> str:
+    """从消息内容中提取文本内容"""
+    if isinstance(content, str):
+        return content
+    elif isinstance(content, list):
+        # 处理多模态消息格式，提取所有文本内容
+        text_parts = []
+        for item in content:
+            if isinstance(item, dict) and item.get("type") == "text":
+                text_parts.append(item.get("text", ""))
+        return " ".join(text_parts)
+    else:
+        return str(content)
+
 @app.post("/v1/chat/completions")
 async def chat_completions(
     request: ChatCompletionRequest,
@@ -309,9 +323,11 @@ async def chat_completions(
     # 将 OpenAI 格式的消息转换为 JetBrains 格式
     jetbrains_messages = []
     for msg in request.messages:
+        # 提取文本内容，处理多模态消息格式
+        text_content = extract_text_content(msg.content)
         # JetBrains API 需要一个特定的交替格式，这里我们简化处理
         # 实际可能需要更复杂的逻辑来确保用户/助手消息交替
-        jetbrains_messages.append({"type": f"{msg.role}_message", "content": msg.content})
+        jetbrains_messages.append({"type": f"{msg.role}_message", "content": text_content})
 
     # 创建 API 请求的 payload
     payload = {
