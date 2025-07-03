@@ -1,0 +1,15 @@
+version: '3.8'
+
+services:
+  jetbrainsai2api:
+    build: .
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./jetbrainsai.json:/app/jetbrainsai.json:ro
+      - ./client_api_keys.json:/app/client_api_keys.json:ro
+      - ./models.json:/app/models.json:ro
+
+    environment:
+      - DEBUG_MODE=${DEBUG_MODE:-false}
+    restart: unless-stopped
