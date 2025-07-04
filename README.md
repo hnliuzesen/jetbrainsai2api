@@ -2,7 +2,7 @@
 
 <div align="center">
 
-![版本](https://img.shields.io/badge/版本-3.1.0-blue.svg)
+![版本](https://img.shields.io/badge/版本-1.4.0-blue.svg)
 ![许可证](https://img.shields.io/badge/许可证-MIT-green.svg)
 ![Python](https://img.shields.io/badge/Python-3.11+-brightgreen.svg)
 
@@ -14,6 +14,9 @@
 > 高性能异步 AI 代理服务，将 JetBrains AI 的大语言模型转换为 OpenAI API 格式，支持真正的流式响应和高并发处理。
 
 
+
+## 🚀 更新日志 (v1.4.0)
+*   **增强 OpenAI 兼容性**：优化了对消息 `role` 的处理逻辑，修复了因角色不规范导致部分客户端调用失败的问题，提升了整体适配性。
 
 ## 🚀 更新日志 (v1.3.0)
 *   **新增 JWT 自动刷新机制**：告别每日手动更换 JWT！现在可以通过配置 `licenseId` 和 `authorization` 实现 JWT 自动刷新，一劳永逸。

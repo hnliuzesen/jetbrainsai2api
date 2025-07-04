@@ -390,7 +390,8 @@ async def chat_completions(
         text_content = extract_text_content(msg.content)
         # JetBrains API 需要一个特定的交替格式，这里我们简化处理
         # 实际可能需要更复杂的逻辑来确保用户/助手消息交替
-        jetbrains_messages.append({"type": f"{msg.role}_message", "content": text_content})
+        role=msg.role if msg.role in ["user", "assistant", "system"] else "user"
+        jetbrains_messages.append({"type": f"{role}_message", "content": text_content})
 
     # 创建 API 请求的 payload
     payload = {
