@@ -17,9 +17,9 @@ DEFAULT_REQUEST_TIMEOUT = 30.0
 
 # Global variables
 VALID_CLIENT_KEYS: set = set()
-JETBRAINS_JWTS: list = []
-current_jwt_index: int = 0
-jwt_rotation_lock = threading.Lock()
+JETBRAINS_ACCOUNTS: list = []
+current_account_index: int = 0
+account_rotation_lock = threading.Lock()
 models_data: Dict[str, Any] = {}
 http_client: Optional[httpx.AsyncClient] = None
 
@@ -120,27 +120,45 @@ def load_client_api_keys():
         print(f"加载 client_api_keys.json 时出错: {e}")
         VALID_CLIENT_KEYS = set()
 
-def load_jetbrains_jwts():
-    """加载 JetBrains AI 认证 JWT"""
-    global JETBRAINS_JWTS
+def load_jetbrains_accounts():
+    """加载 JetBrains AI 认证信息"""
+    global JETBRAINS_ACCOUNTS
     try:
         with open("jetbrainsai.json", "r", encoding="utf-8") as f:
-            # 假设 jetbrainsai.json 包含一个对象列表，每个对象都有 'jwt' 键
-            jwt_data = json.load(f)
-            if isinstance(jwt_data, list):
-                JETBRAINS_JWTS = [item.get("jwt") for item in jwt_data if "jwt" in item]
+            accounts_data = json.load(f)
         
-        if not JETBRAINS_JWTS:
-            print("警告: jetbrainsai.json 中未找到有效的 JWT")
+        if not isinstance(accounts_data, list):
+            print("警告: jetbrainsai.json 格式不正确，应为对象列表")
+            JETBRAINS_ACCOUNTS = []
+            return
+
+        processed_accounts = []
+        for account in accounts_data:
+            if "licenseId" in account and "authorization" in account:
+                processed_accounts.append({
+                    "licenseId": account["licenseId"],
+                    "authorization": account["authorization"],
+                    "jwt": None,
+                    "last_updated": 0
+                })
+            elif "jwt" in account:
+                processed_accounts.append({
+                    "jwt": account["jwt"],
+                    "licenseId": None
+                })
+        
+        JETBRAINS_ACCOUNTS = processed_accounts
+        if not JETBRAINS_ACCOUNTS:
+            print("警告: jetbrainsai.json 中未找到有效的认证信息")
         else:
-            print(f"成功加载 {len(JETBRAINS_JWTS)} 个 JetBrains AI JWT")
-            
+            print(f"成功加载 {len(JETBRAINS_ACCOUNTS)} 个 JetBrains AI 账户")
+
     except FileNotFoundError:
         print("错误: 未找到 jetbrainsai.json 文件")
-        JETBRAINS_JWTS = []
+        JETBRAINS_ACCOUNTS = []
     except Exception as e:
         print(f"加载 jetbrainsai.json 时出错: {e}")
-        JETBRAINS_JWTS = []
+        JETBRAINS_ACCOUNTS = []
 
 def get_model_item(model_id: str) -> Optional[Dict]:
     """根据模型ID获取模型配置"""
@@ -164,19 +182,66 @@ async def authenticate_client(auth: Optional[HTTPAuthorizationCredentials] = Dep
     if auth.credentials not in VALID_CLIENT_KEYS:
         raise HTTPException(status_code=403, detail="无效的客户端 API 密钥")
 
-def get_next_jetbrains_jwt() -> str:
-    """轮询获取下一个 JetBrains JWT"""
-    global current_jwt_index
+async def _refresh_jetbrains_jwt(account: dict):
+    """使用 licenseId 和 authorization 刷新 JWT"""
+    if not http_client:
+        raise HTTPException(status_code=500, detail="HTTP 客户端未初始化")
+
+    print(f"正在为 licenseId {account['licenseId']} 刷新 JWT...")
+    try:
+        headers = {
+            'User-Agent': "ktor-client",
+            'Content-Type': "application/json",
+            'Accept-Charset': "UTF-8",
+            'authorization': f"Bearer {account['authorization']}"
+        }
+        payload = {"licenseId": account["licenseId"]}
+        
+        response = await http_client.post(
+            "https://api.jetbrains.ai/auth/jetbrains-jwt/provide-access/license/v2",
+            json=payload,
+            headers=headers,
+            timeout=DEFAULT_REQUEST_TIMEOUT
+        )
+        response.raise_for_status()
+        
+        data = response.json()
+        if data.get("state") == "PAID" and "token" in data:
+            account["jwt"] = data["token"]
+            account["last_updated"] = time.time()
+            print(f"成功刷新 licenseId {account['licenseId']} 的 JWT")
+        else:
+            print(f"刷新 JWT 失败: 无效的响应状态 {data.get('state')}")
+            raise HTTPException(status_code=500, detail=f"刷新 JWT 失败: {data}")
+
+    except httpx.HTTPStatusError as e:
+        print(f"刷新 JWT 时 HTTP 错误: {e.response.status_code} {e.response.text}")
+        raise HTTPException(status_code=e.response.status_code, detail=f"刷新 JWT 失败: {e.response.text}")
+    except Exception as e:
+        print(f"刷新 JWT 时发生未知错误: {e}")
+        raise HTTPException(status_code=500, detail=f"刷新 JWT 时发生未知错误: {e}")
+
+async def get_next_jetbrains_jwt() -> str:
+    """轮询获取下一个 JetBrains JWT，必要时刷新"""
+    global current_account_index
     
-    if not JETBRAINS_JWTS:
-        raise HTTPException(status_code=503, detail="服务不可用: 未配置 JetBrains JWT")
+    if not JETBRAINS_ACCOUNTS:
+        raise HTTPException(status_code=503, detail="服务不可用: 未配置 JetBrains 账户")
     
-    with jwt_rotation_lock:
-        if not JETBRAINS_JWTS:
-             raise HTTPException(status_code=503, detail="服务不可用: JetBrains JWT 不可用")
-        token_to_use = JETBRAINS_JWTS[current_jwt_index]
-        current_jwt_index = (current_jwt_index + 1) % len(JETBRAINS_JWTS)
-    return token_to_use
+    with account_rotation_lock:
+        account = JETBRAINS_ACCOUNTS[current_account_index]
+        current_account_index = (current_account_index + 1) % len(JETBRAINS_ACCOUNTS)
+
+    # 如果是基于许可证的账户，检查是否需要刷新
+    if account.get("licenseId"):
+        is_stale = time.time() - account.get("last_updated", 0) > 12 * 3600  # 12 小时有效期
+        if not account.get("jwt") or is_stale:
+            await _refresh_jetbrains_jwt(account)
+    
+    if not account.get("jwt"):
+        raise HTTPException(status_code=503, detail=f"无法为 licenseId {account.get('licenseId')} 获取有效的 JWT")
+
+    return account["jwt"]
 
 # FastAPI 生命周期事件
 @app.on_event("startup")
@@ -184,7 +249,7 @@ async def startup():
     global models_data, http_client
     models_data = load_models()
     load_client_api_keys()
-    load_jetbrains_jwts()
+    load_jetbrains_accounts()
     http_client = httpx.AsyncClient(timeout=None)
     print("JetBrains AI OpenAI Compatible API 服务器已启动")
 
@@ -316,7 +381,7 @@ async def chat_completions(
     if not model_config:
         raise HTTPException(status_code=404, detail=f"模型 {request.model} 未找到")
 
-    auth_token = get_next_jetbrains_jwt()
+    auth_token = await get_next_jetbrains_jwt()
 
     # 将 OpenAI 格式的消息转换为 JetBrains 格式
     jetbrains_messages = []
