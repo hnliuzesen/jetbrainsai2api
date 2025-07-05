@@ -7,6 +7,7 @@ from typing import Any, AsyncGenerator, Dict, List, Optional, Union
 import httpx
 import uvicorn
 from fastapi import FastAPI, HTTPException, Depends
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from pydantic import BaseModel, Field
@@ -90,6 +91,16 @@ class StreamResponse(BaseModel):
 
 # FastAPI App
 app = FastAPI(title="JetBrains AI OpenAI Compatible API")
+
+# Add CORS middleware
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],  # Allows all origins
+    allow_credentials=True,
+    allow_methods=["*"],  # Allows all methods
+    allow_headers=["*"],  # Allows all headers
+)
+
 security = HTTPBearer(auto_error=False)
 
 
