@@ -2,7 +2,7 @@
 
 <div align="center">
 
-![版本](https://img.shields.io/badge/版本-2.0.0-blue.svg)
+![版本](https://img.shields.io/badge/版本-3.0.0-blue.svg)
 ![许可证](https://img.shields.io/badge/许可证-MIT-green.svg)
 ![Python](https://img.shields.io/badge/Python-3.11+-brightgreen.svg)
 
@@ -12,6 +12,10 @@
 ---
 
 > 高性能异步 AI 代理服务，将 JetBrains AI 的大语言模型转换为 OpenAI API 格式，支持真正的流式响应和高并发处理。
+
+## 🚀 更新日志 (v3.0.0)
+*   **新增 Anthropic API 兼容**：无缝对接 Anthropic SDK，现已支持 `/v1/messages` 端点。
+*   **智能配额管理**：自动检测并轮换超出配额的 JetBrains 账户，最大化服务可用性。
 
 ## 🚀 更新日志 (v2.0.0)
 *   **全面兼容 Function Calling**：完全实现 OpenAI 的 `tools` 和 `tool_calls` 功能，支持完整的函数调用流程。
@@ -155,6 +159,28 @@ Content-Type: application/json
 }
 ```
 
+### Anthropic 消息
+> 此接口用于兼容 Anthropic SDK。
+```http
+POST /v1/messages
+x-api-key: <client-api-key>
+Content-Type: application/json
+x-anthropic-version: 2023-06-01
+```
+**请求示例：**
+```json
+{
+  "model": "anthropic-claude-3.5-sonnet",
+  "messages": [
+    {"role": "user", "content": "你好"}
+  ],
+  "max_tokens": 1024,
+  "stream": true
+}
+```
+> [!NOTE]
+> 使用 Anthropic SDK 时，请务必在 `client` 初始化时传入 `base_url`。
+
 ### 模型列表
 ```http
 GET /v1/models
@@ -184,14 +210,45 @@ for chunk in response:
         print(chunk.choices[0].delta.content, end="")
 ```
 
+### Python + Anthropic SDK
+```python
+import anthropic
+
+client = anthropic.Anthropic(
+    api_key="sk-client-key-1",
+    base_url="http://localhost:8000/v1",
+)
+
+with client.messages.stream(
+    max_tokens=1024,
+    messages=[{"role": "user", "content": "写一首关于夏天的诗"}],
+    model="anthropic-claude-3.5-sonnet",
+) as stream:
+    for text in stream.text_stream:
+        print(text, end="", flush=True)
+```
+
 ### cURL
 ```bash
+# OpenAI API
 curl -X POST http://localhost:8000/v1/chat/completions \
   -H "Authorization: Bearer sk-client-key-1" \
   -H "Content-Type: application/json" \
   -d '{
     "model": "anthropic-claude-3.5-sonnet",
     "messages": [{"role": "user", "content": "你好"}],
+    "stream": true
+  }'
+
+# Anthropic API
+curl -X POST http://localhost:8000/v1/messages \
+  -H "x-api-key: sk-client-key-1" \
+  -H "Content-Type: application/json" \
+  -H "x-anthropic-version: 2023-06-01" \
+  -d '{
+    "model": "anthropic-claude-3.5-sonnet",
+    "messages": [{"role": "user", "content": "你好"}],
+    "max_tokens": 1024,
     "stream": true
   }'
 ```
