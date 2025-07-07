@@ -24,14 +24,8 @@ current_account_index: int = 0
 account_rotation_lock = asyncio.Lock()
 file_write_lock = asyncio.Lock()
 models_data: Dict[str, Any] = {}
+anthropic_model_mappings: Dict[str, str] = {}
 http_client: Optional[httpx.AsyncClient] = None
-
-# --- Model Mappings ---
-MODEL_MAPPINGS = {
-    "claude-sonnet-4-20250514": "anthropic-claude-4-sonnet",
-    # Add other mappings here as needed
-}
-
 
 # Pydantic Models
 class ChatMessage(BaseModel):
@@ -182,10 +176,32 @@ security = HTTPBearer(auto_error=False)
 
 # Helper functions
 def load_models():
-    """加载模型配置"""
+    """加载模型配置和映射规则"""
+    global anthropic_model_mappings
     try:
         with open("models.json", "r", encoding="utf-8") as f:
-            model_ids = json.load(f)
+            config = json.load(f)
+
+        # 支持新格式（包含 models 和 anthropic_model_mappings）
+        if isinstance(config, dict):
+            if "models" in config:
+                model_ids = config["models"]
+                # 加载模型映射配置
+                anthropic_model_mappings = config.get("anthropic_model_mappings", {})
+                print(f"从 models.json 加载了 {len(anthropic_model_mappings)} 个模型映射规则")
+            else:
+                # 处理旧格式的字典（如果有其他字段但没有 models）
+                model_ids = []
+                anthropic_model_mappings = {}
+                print("警告: models.json 使用非标准格式，没有找到 models 字段")
+        # 支持旧格式（仅包含模型列表）
+        elif isinstance(config, list):
+            model_ids = config
+            anthropic_model_mappings = {}
+            print("警告: models.json 使用旧格式，没有找到模型映射配置")
+        else:
+            print("错误: models.json 格式不正确")
+            return {"data": []}
 
         processed_models = []
         if isinstance(model_ids, list):
@@ -203,6 +219,8 @@ def load_models():
         return {"data": processed_models}
     except Exception as e:
         print(f"加载 models.json 时出错: {e}")
+        # 设置默认映射规则
+        anthropic_model_mappings = {}
         return {"data": []}
 
 
@@ -1085,9 +1103,11 @@ async def messages_completions(
     """创建符合 Anthropic 规范的聊天完成"""
     openai_request = convert_anthropic_to_openai(request)
 
-    # Apply model mapping
-    if openai_request.model in MODEL_MAPPINGS:
-        openai_request.model = MODEL_MAPPINGS[openai_request.model]
+    # Apply model mapping specifically for /v1/messages endpoint using config from models.json
+    if openai_request.model in anthropic_model_mappings:
+        original_model = openai_request.model
+        openai_request.model = anthropic_model_mappings[openai_request.model]
+        print(f"Model mapping applied: {original_model} -> {openai_request.model}")
 
     model_config = get_model_item(openai_request.model)
     if not model_config:
@@ -1223,7 +1243,14 @@ if __name__ == "__main__":
 
     if not os.path.exists("models.json"):
         with open("models.json", "w", encoding="utf-8") as f:
-            json.dump(["anthropic-claude-3.5-sonnet"], f, indent=2)
+            example_config = {
+                "models": ["anthropic-claude-3.5-sonnet"],
+                "anthropic_model_mappings": {
+                    "claude-3.5-sonnet": "anthropic-claude-3.5-sonnet",
+                    "sonnet": "anthropic-claude-3.5-sonnet"
+                }
+            }
+            json.dump(example_config, f, indent=2)
         print("已创建示例 models.json 文件")
 
     print("正在启动 JetBrains AI OpenAI Compatible API 服务器...")
